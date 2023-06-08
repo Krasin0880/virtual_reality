@@ -100,7 +100,8 @@ function draw() {
   let translateToPointZero = m4.translation(0, 0, -10);
   let translateToCenter = m4.multiply(m4.scaling(3, 3, 1), m4.translation(-0.5, -0.5, -10));
 
-  let matAccum0 = m4.multiply(rotateToPointZero, m4.multiply(modelView, getRotationMatrix(fusionSensor.alpha, fusionSensor.beta, fusionSensor.gamma)));
+  // let matAccum0 = m4.multiply(rotateToPointZero, m4.multiply(modelView, getRotationMatrix(fusionSensor.alpha, fusionSensor.beta, fusionSensor.gamma)));
+  let matAccum0 = m4.multiply(rotateToPointZero, modelView);
   let webCamAccum0 = m4.multiply(rotateToPointZero, webCamView);
   let matAccum1 = m4.multiply(translateToPointZero, matAccum0);
   let webCamAccum1 = m4.multiply(translateToCenter, webCamAccum0);
@@ -146,10 +147,14 @@ function draw() {
   surface.Draw();
   gl.colorMask(true, true, true, true);
   // let translate = shoe(map(userPoint.x, 0, 1, -1, 1), map(userPoint.y, 0, 1, -1, 1))
-  // gl.uniform3fv(shProgram.iTranslateSphere, [translate.x, translate.y, translate.z])
-  // gl.uniform1f(shProgram.iB, 1);
-  // gl.clear(gl.DEPTH_BUFFER_BIT);
-  // sphere.DrawSphere();
+  let translate = translationVec(fusionSensor.beta, fusionSensor.gamma, fusionSensor.alpha)
+  gl.uniform3fv(shProgram.iTranslateSphere, [translate[0], translate[1], translate[2]])
+  gl.uniform1f(shProgram.iB, 1);
+  gl.clear(gl.DEPTH_BUFFER_BIT);
+  if (panner) {
+    panner.setPosition(translate[0], translate[1], translate[2]);
+  }
+  sphere.DrawSphere();
 }
 
 function CreateSurfaceData() {
@@ -319,6 +324,7 @@ function createProgram(gl, vShader, fShader) {
  * initialization function that will be called when the page has loaded
  */
 function init() {
+  startAudio()
   userPoint = { x: 0.7, y: 0.6 }
   magnit = 1.0;
   let canvas;
@@ -556,6 +562,54 @@ function requestDeviceOrientation() {
     console.log('not iOS');
 }
 
+function translationVec(alpha, beta, gamma) {
+  // Convert angles to radians
+  const alphaRad = (alpha * Math.PI) / 180;
+  const betaRad = (beta * Math.PI) / 180;
+  const gammaRad = (gamma * Math.PI) / 180;
+
+  // Define the initial vector along the x-axis
+  let vector = [0, 0, 1];
+
+  // Rotation around the z-axis (gamma)
+  const rotZ = [
+    [Math.cos(gammaRad), -Math.sin(gammaRad), 0],
+    [Math.sin(gammaRad), Math.cos(gammaRad), 0],
+    [0, 0, 1]
+  ];
+  vector = multiplyMatrixVector(rotZ, vector);
+
+  // Rotation around the y-axis (beta)
+  const rotY = [
+    [Math.cos(betaRad), 0, Math.sin(betaRad)],
+    [0, 1, 0],
+    [-Math.sin(betaRad), 0, Math.cos(betaRad)]
+  ];
+  vector = multiplyMatrixVector(rotY, vector);
+
+  // Rotation around the x-axis (alpha)
+  const rotX = [
+    [1, 0, 0],
+    [0, Math.cos(alphaRad), -Math.sin(alphaRad)],
+    [0, Math.sin(alphaRad), Math.cos(alphaRad)]
+  ];
+  vector = multiplyMatrixVector(rotX, vector);
+
+  return vector;
+}
+
+function multiplyMatrixVector(matrix, vector) {
+  const result = [];
+  for (let i = 0; i < matrix.length; i++) {
+    let sum = 0;
+    for (let j = 0; j < vector.length; j++) {
+      sum += matrix[i][j] * vector[j];
+    }
+    result.push(sum);
+  }
+  return result;
+}
+
 var degtorad = Math.PI / 180; // Degree-to-Radian conversion
 
 function getRotationMatrix(alpha, beta, gamma) {
@@ -594,3 +648,65 @@ function getRotationMatrix(alpha, beta, gamma) {
   ];
 
 };
+
+let audio = null;
+let audioContext;
+let source;
+let panner;
+let filter;
+
+function initializeAudio() {
+  audio = document.getElementById('audio');
+
+  audio.addEventListener('play', handlePlay);
+
+  audio.addEventListener('pause', handlePause);
+}
+
+function handlePlay() {
+  console.log('play');
+  if (!audioContext) {
+    audioContext = new AudioContext();
+    source = audioContext.createMediaElementSource(audio);
+    panner = audioContext.createPanner();
+    filter = audioContext.createBiquadFilter();
+
+    source.connect(panner);
+    panner.connect(filter);
+    filter.connect(audioContext.destination);
+
+    filter.type = 'highshelf';
+    filter.Q.value = 15;
+    filter.frequency.value = 600;
+    filter.gain.value = 8;
+
+    audioContext.resume();
+  }
+}
+
+function handlePause() {
+  console.log('pause');
+  audioContext.resume();
+}
+
+function toggleFilter() {
+  let filterCheckbox = document.getElementById('filterCheckbox');
+  if (filterCheckbox.checked) {
+    panner.disconnect();
+    panner.connect(filter);
+    filter.connect(audioContext.destination);
+  }
+  else {
+    panner.disconnect();
+    panner.connect(audioContext.destination);
+  }
+}
+
+function startAudio() {
+  initializeAudio();
+
+  let filterCheckbox = document.getElementById('filterCheckbox');
+  filterCheckbox.addEventListener('change', toggleFilter);
+
+  audio.play();
+}
